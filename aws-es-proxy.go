@@ -132,14 +132,24 @@ func newProxy(args ...interface{}) *proxy {
 }
 
 // newTransport returns an http.RoundTripper cloned from http.DefaultTransport.
-// When disableHTTP2 is true, HTTP/2 is disabled by clearing ForceAttemptHTTP2
-// and setting TLSNextProto to a non-nil empty map, which suppresses ALPN
-// negotiation of "h2" so all outbound connections stay on HTTP/1.1.
+// When disableHTTP2 is true, three things must all be set to fully disable HTTP/2:
+//   - ForceAttemptHTTP2 = false
+//   - TLSNextProto set to a non-nil empty map (removes the "h2" handler)
+//   - TLSClientConfig.NextProtos = ["http/1.1"] (removes "h2" from the ALPN
+//     advertisement). Without this, http.DefaultTransport.Clone() carries over
+//     TLSClientConfig.NextProtos = ["h2","http/1.1"] populated by Go's lazy
+//     HTTP/2 init, ALPN still negotiates "h2" server-side, and the client
+//     falls through to HTTP/1.1 on an h2 wire — producing "malformed HTTP
+//     response \x00\x00\x12\x04..." (raw HTTP/2 SETTINGS frames).
 func newTransport(disableHTTP2 bool) *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	if disableHTTP2 {
 		t.ForceAttemptHTTP2 = false
 		t.TLSNextProto = map[string]func(authority string, c *tls.Conn) http.RoundTripper{}
+		if t.TLSClientConfig == nil {
+			t.TLSClientConfig = &tls.Config{}
+		}
+		t.TLSClientConfig.NextProtos = []string{"http/1.1"}
 	}
 	return t
 }
