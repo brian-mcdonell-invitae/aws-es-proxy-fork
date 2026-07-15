@@ -1,0 +1,5 @@
+*~
+vendor
+glide.lock
+dist
+.idea
