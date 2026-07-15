@@ -8,14 +8,24 @@ Upstream's `http.Client` inherits Go's default transport, which auto-negotiates 
 
 ## Usage
 
-Identical to upstream, with one added flag:
+Identical to upstream, with two added flags:
 
 ```
 -disable-http2
     Disable HTTP/2 on the outbound HTTPS client (default true)
+
+-verbose-exclude-regex string
+    When -verbose is set, suppress the per-request log line for requests
+    whose URI matches this regex (e.g. '/_bulk|/_msearch')
 ```
 
 To restore upstream behavior (HTTP/2 enabled), pass `-disable-http2=false`.
+
+Example: log every request except `_bulk` and `_msearch`:
+
+```
+aws-es-proxy -endpoint=... -verbose -verbose-exclude-regex='/_bulk|/_msearch'
+```
 
 ## Building
 

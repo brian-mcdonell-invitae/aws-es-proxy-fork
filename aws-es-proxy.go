@@ -89,9 +89,10 @@ type proxy struct {
 	username        string
 	password        string
 	realm           string
-	remoteTerminate bool
-	assumeRole      string
-	disableHTTP2    bool
+	remoteTerminate    bool
+	assumeRole         string
+	disableHTTP2       bool
+	verboseExcludeRegex *regexp.Regexp
 }
 
 func newProxy(args ...interface{}) *proxy {
@@ -106,6 +107,7 @@ func newProxy(args ...interface{}) *proxy {
 	}
 
 	disableHTTP2 := args[12].(bool)
+	verboseExcludeRegex := args[13].(*regexp.Regexp)
 
 	client := http.Client{
 		Timeout:       time.Duration(args[5].(int)) * time.Second,
@@ -115,19 +117,20 @@ func newProxy(args ...interface{}) *proxy {
 	}
 
 	return &proxy{
-		endpoint:        args[0].(string),
-		verbose:         args[1].(bool),
-		prettify:        args[2].(bool),
-		logtofile:       args[3].(bool),
-		nosignreq:       args[4].(bool),
-		httpClient:      &client,
-		auth:            args[6].(bool),
-		username:        args[7].(string),
-		password:        args[8].(string),
-		realm:           args[9].(string),
-		remoteTerminate: args[10].(bool),
-		assumeRole:      args[11].(string),
-		disableHTTP2:    disableHTTP2,
+		endpoint:            args[0].(string),
+		verbose:             args[1].(bool),
+		prettify:            args[2].(bool),
+		logtofile:           args[3].(bool),
+		nosignreq:           args[4].(bool),
+		httpClient:          &client,
+		auth:                args[6].(bool),
+		username:            args[7].(string),
+		password:            args[8].(string),
+		realm:               args[9].(string),
+		remoteTerminate:     args[10].(bool),
+		assumeRole:          args[11].(string),
+		disableHTTP2:        disableHTTP2,
+		verboseExcludeRegex: verboseExcludeRegex,
 	}
 }
 
@@ -386,7 +389,7 @@ func (p *proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		query = ""
 	}
 
-	if p.verbose {
+	if p.verbose && (p.verboseExcludeRegex == nil || !p.verboseExcludeRegex.MatchString(proxied.RequestURI())) {
 		if p.prettify {
 			var prettyBody bytes.Buffer
 			json.Indent(&prettyBody, []byte(query), "", "  ")
@@ -512,9 +515,10 @@ func main() {
 		fileResponse    *os.File
 		err             error
 		timeout         int
-		remoteTerminate bool
-		assumeRole      string
-		disableHTTP2    bool
+		remoteTerminate    bool
+		assumeRole         string
+		disableHTTP2       bool
+		verboseExcludeExpr string
 	)
 
 	flag.StringVar(&endpoint, "endpoint", "", "Amazon ElasticSearch Endpoint (e.g: https://dummy-host.eu-west-1.es.amazonaws.com)")
@@ -533,7 +537,17 @@ func main() {
 	flag.BoolVar(&remoteTerminate, "remote-terminate", false, "Allow HTTP remote termination")
 	flag.StringVar(&assumeRole, "assume", "", "Optionally specify role to assume")
 	flag.BoolVar(&disableHTTP2, "disable-http2", true, "Disable HTTP/2 on the outbound HTTPS client (default true)")
+	flag.StringVar(&verboseExcludeExpr, "verbose-exclude-regex", "", "When -verbose is set, suppress the per-request log line for requests whose URI matches this regex (e.g. '/_bulk|/_msearch')")
 	flag.Parse()
+
+	var verboseExcludeRegex *regexp.Regexp
+	if verboseExcludeExpr != "" {
+		re, err := regexp.Compile(verboseExcludeExpr)
+		if err != nil {
+			logrus.Fatalf("invalid -verbose-exclude-regex %q: %v", verboseExcludeExpr, err)
+		}
+		verboseExcludeRegex = re
+	}
 
 	if endpoint == "" {
 		if v, ok := os.LookupEnv(strings.ToUpper("endpoint")); ok {
@@ -581,10 +595,14 @@ func main() {
 		remoteTerminate,
 		assumeRole,
 		disableHTTP2,
+		verboseExcludeRegex,
 	)
 
 	if disableHTTP2 {
 		logrus.Infoln("HTTP/2 disabled on outbound HTTPS client")
+	}
+	if verboseExcludeRegex != nil {
+		logrus.Infof("Verbose logging will skip requests matching %q", verboseExcludeExpr)
 	}
 
 	if err = p.parseEndpoint(); err != nil {
